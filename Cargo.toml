@@ -3,19 +3,14 @@ name = "consortium"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-rand = "0.8.5"
-tokio = { version = "1", features = ["full"] }
-tokio-test = "0.4.2"
-
-[lib]
-name = "chat_lib"
-path = "src/lib.rs"
-
 [[bin]]
 name = "server"
-path = "src/server.rs"
+path = "src/bin/server.rs"
 
 [[bin]]
 name = "client"
-path = "src/client.rs"
+path = "src/bin/client.rs"
+
+[dependencies]
+rand = "0.8.5"
+tokio = { version = "1", features = ["full"] }
