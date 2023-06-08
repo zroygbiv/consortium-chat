@@ -1,10 +1,9 @@
-use std::{error::Error, env, sync::Arc};
+use std::{env, error::Error, io::Write, sync::Arc};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
     sync::{broadcast, Mutex},
 };
- 
 const LOCAL_ADDR: &str = "127.0.0.1";
 
 /// This contains the chat server implementation using the Tokio runtime for asynchronous networking.
@@ -19,11 +18,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let listener = TcpListener::bind(&addr).await?;
 
-    server_startup_banner(&addr);
+    println!("{}", server_startup_banner(&addr));
+
     // Broadcast channel for sending messages (transmitter & receiver)
     let (tx, _rx) = broadcast::channel(500);
     // Wrap transmitter in ARC and mutex for synchronized sharing
     let tx_arc = Arc::new(Mutex::new(tx));
+
+    // Spawn task to listen for CLI shutdown command
+    tokio::spawn(async move {
+        let mut input = String::new();
+        let stdin = tokio::io::stdin();
+        let mut reader = BufReader::new(stdin);
+
+        loop {
+            print!("\n🦀> ");
+            std::io::stdout().flush().unwrap(); // Flush the stdout to ensure prompt is displayed
+
+            if reader.read_line(&mut input).await.unwrap() == 0 {
+                break; 
+            }
+
+            let cmd = input.trim().to_lowercase();
+
+            if cmd == "shutdown" {
+                println!("Shutting down the server...");
+                // Terminate 
+                std::process::exit(0);
+            } else {
+                println!("Unknown command. Please enter 'shutdown' to stop the server.");
+            }
+
+            input.clear();
+        }
+    });
 
     loop {
         // Accept incoming connection from client
@@ -42,6 +70,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut line = String::new();
 
             loop {
+                // Handle async operations concurrently
                 tokio::select! {
                     // Read line from client
                     result = reader.read_line(&mut line) => {
@@ -89,11 +118,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Prints a startup banner for the server with the provided address.
-pub fn server_startup_banner(addr: &str) {
-    println!("\n");
-    println!("    🌐🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🌐");
-    println!("    ╔══════════════════════════════════════════════╗");
-    println!(":::: \x1b[91mConsortium Server\x1b[0m is \x1b[92mOnline\x1b[0m on \x1b[94;1m{}\x1b[0m  ::::", addr);
-    println!("    ╚══════════════════════════════════════════════╝");
-    println!("    🌐🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🦀🌐");
+pub fn server_startup_banner(addr: &str) -> String {
+    let mut output = String::new();
+    output.push_str("    ╔══════════════════════════════════════════════╗\n");
+    output.push_str(&format!(":::: \x1b[91mConsortium Server\x1b[0m is \x1b[92mOnline\x1b[0m on \x1b[94;1m{}\x1b[0m  ::::\n", addr));
+    output.push_str("    ╚══════════════════════════════════════════════╝\n");
+    output.push_str("Enter 'shutdown' to quit the server:");
+
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_server_startup_banner() {
+        let addr = "127.0.0.1:8080";
+        let expected_output = format!(
+            "    ╔══════════════════════════════════════════════╗\n\
+            :::: \x1b[91mConsortium Server\x1b[0m is \x1b[92mOnline\x1b[0m on \x1b[94;1m{}\x1b[0m  ::::\n    \
+                 ╚══════════════════════════════════════════════╝\n\
+            Enter 'shutdown' to quit the server:",
+            addr
+        );
+
+        let output = server_startup_banner(addr);
+        assert_eq!(output, expected_output);
+    }
 }
