@@ -5,98 +5,111 @@ use std::{
     io::{self, BufRead},
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
 
 const LOCAL_ADDR: &str = "127.0.0.1";
 
-/// This includes the chat client implementation
-///
-/// It establishes a connection with the server at a specified address and port, enabling chat communication. 
-/// It generates a random emoji and username for the client, and sends a join message to the server. It then 
-/// listens for incoming messages from the server and sends user input messages to the server until the user 
-/// enters "quit".
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let port = env::args().nth(1).unwrap_or_else(|| "8080".to_string());
-    let server_addr = format!("{}:{}", LOCAL_ADDR, port);
+    let addr = format!("{}:{}", LOCAL_ADDR, port);
+
     // Connect to TCP server at specified address
-    let stream = match TcpStream::connect(&server_addr).await {
-        Ok(stream) => stream,
-        Err(err) => {
-            eprintln!("❌Failed to connect to the server! No server running on the requested port.❌");
-            return Err(err.into())
-        }
-    };
+    let stream = connect_to_server(&addr).await?;
+
     // Split TCP stream into reader and writer
     let (reader, mut writer) = stream.into_split();
     // Wrap reader with buffered reader for improved performance
-    let mut reader = tokio::io::BufReader::new(reader);
+    let reader = BufReader::new(reader);
     // Generate random emoji and username for client
     let username = generate_random_username();
     let emoji = generate_random_emoji();
 
-    // Clone emoji and username; maintain proper ownership
-    let user_clone = username.clone();
-    let emoji_clone = emoji.clone();
-
-    welcome_message(emoji_clone, user_clone);
+    welcome_message(&emoji, &username);
 
     // Spawn task to read messages from server
-    tokio::spawn(async move {
-        let mut line = String::new();
-        loop {
-            match reader.read_line(&mut line).await {
-                // Connection closed; exit loop
-                Ok(0) => break,
-                Ok(_) => {
-                    let message = line.trim();
-                    if !message.is_empty() {
-                        // Print received message
-                        println!("{}", message);
-                    }
-                    line.clear();
-                }
-                // Server read error; exit loop
-                Err(_) => break,
-            }
-        }
-    });
+    tokio::spawn(read_messages_from_server(reader));
 
-    // Send user joined message
-    let join_chat = user_enter_chat(&emoji, &username);
-    // Send join message to server
-    writer.write_all(join_chat.as_bytes()).await?;
+    // Send user join message to server
+    writer
+        .write_all(user_enter_chat(&emoji, &username).as_bytes())
+        .await?;
     // Send newline character to indicate end of message
     writer.write_all(b"\n").await?;
 
-    // Read user input from stdin and send it to the server
+    // Read user input from stdin, send it to the server
     let stdin = io::stdin();
+    // Aquire lock on input stream, set up iterator over input
     let mut lines = stdin.lock().lines();
+    // Handle client input, sending messages to server
+    send_messages_to_server(&mut lines, &mut writer, &emoji, &username).await?;
 
+    Ok(())
+}
+
+/// Connects to a TCP server at the specified address or returns error if connection fails.
+async fn connect_to_server(server_addr: &str) -> Result<TcpStream, Box<dyn Error>> {
+    match TcpStream::connect(server_addr).await {
+        Ok(stream) => Ok(stream),
+        Err(err) => {
+            eprintln!(
+                "❌Failed to connect to the server! No server running on the requested port.❌"
+            );
+            Err(err.into())
+        }
+    }
+}
+
+/// Reads messages from the server and prints them to the console.
+async fn read_messages_from_server(
+    mut reader: tokio::io::BufReader<tokio::net::tcp::OwnedReadHalf>,
+) {
+    let mut line = String::new();
+    loop {
+        match reader.read_line(&mut line).await {
+            // Server connection closed; exit loop
+            Ok(0) => break,
+            Ok(_) => {
+                let message = line.trim();
+                // Print received message
+                println!("{}", message);
+                line.clear();
+            }
+            // Server read error; exit loop
+            Err(_) => break,
+        }
+    }
+}
+
+/// Sends messages from the client to the server.
+async fn send_messages_to_server(
+    lines: &mut io::Lines<io::StdinLock<'_>>,
+    writer: &mut (impl AsyncWriteExt + Unpin),
+    emoji: &str,
+    username: &str,
+) -> Result<(), Box<dyn Error>> {
     loop {
         if let Some(Ok(line)) = lines.next() {
+            // User entered "quit"; exit loop
             if line.trim().to_lowercase() == "quit" {
-                // Send user left chat message
                 writer
-                    .write_all(user_left_chat(&emoji, &username).as_bytes())
+                    // Send user left chat message to server
+                    .write_all(user_left_chat(emoji, username).as_bytes())
                     .await?;
                 writer.write_all(b"\n").await?;
-                // Exit the loop if the user enters "quit"
                 break;
             }
-
-            // Format the user's message
+            // Format user's message
             let message = format!("{} {}: {}", emoji, username, line);
-            // Send the message to the server
+            // Send message to the server
             writer.write_all(message.as_bytes()).await?;
-            // Send a newline character to indicate the end of the message
+            // Send newline character to indicate end of the message
             writer.write_all(b"\n").await?;
         }
     }
 
-    // Return Ok to indicate successful execution
     Ok(())
 }
 
@@ -195,8 +208,8 @@ pub fn generate_random_emoji() -> String {
         "🌸", "🌞", "🐳", "🌼", "🎻", "🎁", "🍔", "🎹", "🔒", "🌍", "🌩", "🍭", "🌹", "🌄", "🐬",
         "🌻", "💧", "🎈", "🌮", "🌹", "🔑", "🌎", "🌪", "🍩", "🌷", "🌅", "🦈", "🌧", "🎊", "🍟",
         "🎷", "🔓", "🌏", "⛈", "🍰", "🌇", "🐠", "🌺", "💨", "🎀", "🌭", "🎺", "🔐", "🌕", "🌧",
-        "🍪", "🌆", "🐙", "💫", "🎵", "🍿", "🥁", "🗝️", "🌖", "🍨", "🌉", "🦀", "🎶", "🥤", "🎼",
-        "🔒", "🌗", "🌤️", "🍦", "🏞️", "🐌", "🌩️", "🎵", "🍺", "🪕", "🐝", "🌘", "🌥️", "🍩", "🏙️", "☀️",
+        "🍪", "🌆", "🐙", "💫", "🎵", "🍿", "🥁", "🗝️", "🌖", "🍨", "🌉", "🔒", "🎶", "🥤", "🎼",
+        "🌗", "🌤️", "🍦", "🏞️", "🐌", "🌩️", "🎵", "🍺", "🪕", "🐝", "🌘", "🌥️", "🍩", "🏙️", "☀️",
     ];
 
     let mut rng = rand::thread_rng();
@@ -205,7 +218,7 @@ pub fn generate_random_emoji() -> String {
 }
 
 /// Prints a welcome message with the provided emoji and username.
-pub fn welcome_message(emoji: String, username: String) {
+pub fn welcome_message(emoji: &str, username: &str) {
     println!("\n");
     println!("╔═════════════════════════════════╗");
     println!("║     🦀Consortium Chat v1.0🦀    ║");
@@ -230,16 +243,13 @@ pub fn user_left_chat(emoji: &str, username: &str) -> String {
 mod tests {
     use super::*;
 
-    // Defines EMOJI_LIST as a static slice (&[&str]), initializes it with the
-    // array literal syntax. Each emoji is represented as a string literal (&str)
-    // within the array.
     static EMOJI_LIST: &[&str] = &[
         "🌟", "🚀", "💡", "🔥", "🌈", "🐢", "🌺", "🌊", "🎉", "🍕", "🎸", "📚", "🌙", "⚡", "🍦",
         "🌸", "🌞", "🐳", "🌼", "🎻", "🎁", "🍔", "🎹", "🔒", "🌍", "🌩", "🍭", "🌹", "🌄", "🐬",
         "🌻", "💧", "🎈", "🌮", "🌹", "🔑", "🌎", "🌪", "🍩", "🌷", "🌅", "🦈", "🌧", "🎊", "🍟",
         "🎷", "🔓", "🌏", "⛈", "🍰", "🌇", "🐠", "🌺", "💨", "🎀", "🌭", "🎺", "🔐", "🌕", "🌧",
-        "🍪", "🌆", "🐙", "💫", "🎵", "🍿", "🥁", "🗝️", "🌖", "🍨", "🌉", "🦀", "🎶", "🥤", "🎼",
-        "🔒", "🌗", "🌤️", "🍦", "🏞️", "🐌", "🌩️", "🎵", "🍺", "🪕", "🐝", "🌘", "🌥️", "🍩", "🏙️", "☀️",
+        "🍪", "🌆", "🐙", "💫", "🎵", "🍿", "🥁", "🗝️", "🌖", "🍨", "🌉", "🔒", "🎶", "🥤", "🎼",
+        "🌗", "🌤️", "🍦", "🏞️", "🐌", "🌩️", "🎵", "🍺", "🪕", "🐝", "🌘", "🌥️", "🍩", "🏙️", "☀️",
     ];
 
     #[test]
@@ -267,6 +277,6 @@ mod tests {
         let emoji = "🌟";
         let username = "test_user";
         let message = user_left_chat(emoji, username);
-        assert_eq!(message, "🦀 🌟 test_user has left the chat 🦀");
+        assert_eq!(message, "🦀::: 🌟 test_user has left the chat :::🦀");
     }
 }
