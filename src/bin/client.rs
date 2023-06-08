@@ -33,7 +33,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (reader, mut writer) = stream.into_split();
     // Wrap reader with buffered reader for improved performance
     let mut reader = tokio::io::BufReader::new(reader);
-
     // Generate random emoji and username for client
     let username = generate_random_username();
     let emoji = generate_random_emoji();

@@ -56,7 +56,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         if bytes_read == 0 {
                             break;
                         }
-
                         // Send received line and client's address to other clients
                          if let Err(err) = tx.lock().await.send((line.clone(), addr)) {
                             eprintln!("Send error: {}", err);
