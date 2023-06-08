@@ -109,7 +109,6 @@ async fn send_messages_to_server(
             writer.write_all(b"\n").await?;
         }
     }
-
     Ok(())
 }
 
